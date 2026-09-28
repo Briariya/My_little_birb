@@ -1,0 +1,11 @@
+# diffusion-pipe dataset config
+resolutions = [512]
+
+enable_ar_bucket = true
+min_ar = 0.5
+max_ar = 2.0
+num_ar_buckets = 7
+
+[[directory]]
+path = '/path/to/anima_alcohol_markers_lora/dataset'
+num_repeats = 5
