@@ -2,8 +2,10 @@
 (markers, pencils, hands, cutting mat, neighbouring sketches), inpaint small
 foreign objects on plain paper, and save under sequential names.
 
-Usage: python prepare_dataset.py <raw_dir> <out_dir>
-Crop boxes and inpaint rects are fractions of width/height: (left, top, right, bottom).
+Usage: python prepare_dataset.py <raw_root> <out_dir>
+<raw_root> holds the unpacked archive folders (Животные, Фурри, Портреты с цветным лайном).
+Crop boxes and inpaint rects are fractions of width/height: (left, top, right, bottom);
+an inpaint entry can also be a polygon given as a list of (x, y) fractions.
 """
 import os
 import sys
@@ -12,8 +14,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
-# raw file -> (output name, crop box or None, [inpaint rects])
-PLAN = {
+# raw file -> (output name, crop box or None, [inpaint rects / polygons])
+ANIMALS = {
     "05460c6e6f3aff20d7ee6b2f8faa5125.jpg": ("tiger_lying", (0, 0.1, 1, 0.91), []),
     "080d00dcc6f9f25d0e717a9b76649fe6.jpg": ("fairy_rabbit", (0, 0, 0.97, 1), [(0.86, 0.84, 1, 1)]),
     "0c9aca2a781b1d19cfa2d1f6cd5c567c.jpg": ("husky_portrait", (0.1, 0, 1, 1), []),
@@ -56,19 +58,79 @@ PLAN = {
 #   6ad2b77d49c62728725d1ab597265a93.jpg - fineliner lies across the wolf's ear, Promarker over the corner
 
 
+FURRY = {
+    "0176514c59b8656d03ca213163eeb526.jpg": ("furry_pink_hair_headshot", (0, 0, 0.965, 0.73), []),
+    "1633839993.keshakotolapa_белый_шум_скетч_кмм.jpg": ("furry_cat_gold_chain", None, []),
+    "1640298684.dashthefox_613.jpg": ("furry_glamrock_freddy", None, [
+        [(0.02, 0.08), (0.27, 0.08), (0.3, 0.12), (0.3, 0.18), (0.285, 0.198), (0.24, 0.23), (0.22, 0.32), (0.02, 0.32)],
+    ]),
+    "1648603299.yiffmasters_c6ef8c56-9ad3-4890-a1a0-2b59e6692f57_jpeg.jpg": ("furry_calico_scarf", None, []),
+    "1651621213.dreamydogden_markers.jpg": ("furry_green_eyes_closeup", None, []),
+    "1667425935.maoshan_art084.jpg": ("furry_paw_claws", (0, 0, 1, 0.93), []),
+    "1707332775.khayen_andrasimg_20231123_050911823.jpg": ("furry_avian_pink_hair", (0, 0.095, 1, 1), []),
+    "1707437174.khayen_puckyimg_20231124_022056080.jpg": ("furry_dog_chain_collar", None, []),
+    "1720717765.shabudi_image_2024-07-11_190033837.png": ("furry_cat_green_hoodie", (0.045, 0.02, 0.905, 1), []),
+    "1767400237.geckozen_1-1-26_lyndi_markers0001.jpg": ("furry_fox_girl_shorts", None, [(0, 0, 0.25, 0.09)]),
+    "1788980454.heatzone_3715.jpg": ("furry_blue_shark_glasses", None, []),
+    "1790288514.runarhrothgar_img_1657.jpg": ("furry_lynx_chest", None, []),
+    "1790289594.runarhrothgar_img_1655.png": ("furry_black_wolf", None, []),
+    "393fc9f46faf942fcddcf535d5152112.jpg": ("furry_cat_two_tone_hair", None, [(0, 0, 0.12, 0.06), (0, 0.78, 0.09, 0.92)]),
+    "39775be55235eab73fe12a39b41b4fa6.jpg": ("furry_wolf_goggles", None, []),
+    "6f346313299759fc3005c2d9352b22e7.jpg": ("furry_grey_badge", None, []),
+    "cc94ed6fbd95fc39eedbfe30cf70c070.jpg": ("furry_rainbow_ears_drink", (0, 0, 0.94, 0.97), []),
+    "d965c0164402736728dc5a1d42e37943.jpg": ("furry_horned_wolf_collar", None, []),
+    "nk7simyr_lg.jpg": ("furry_fox_girl_wallpaper", None, []),
+}
+
+# Dropped from Фурри:
+#   aac8456b06b9deb904b85e910e9f854f.jpg - fineliner and marker lie against the paw, inpainting leaves smears
+
+LINE = {
+    "02293923a0199039e77357e6b38ceffe.jpg": ("line_four_elf_girls", None, []),
+    "0c2ff66d7771e9a5d0eb33d49c827222.jpg": ("line_girl_doodle_background", None, []),
+    "2a0a5ed8a1477a9f0b8d266fd7f92482.jpg": ("line_girl_red_glasses", (0, 0, 1, 0.97), []),
+    "5f4aa47ceabe4624d92e4db5f383a0b7.jpg": ("line_demon_girl_blue_hair", None, []),
+    "8809f09b0f3d5f2fd8b71387d9be9689.jpg": ("line_sailor_venus", None, []),
+    "88897f2246e798b5cfeffd57d9b5ffdc.jpg": ("line_snake_hair_girl", None, []),
+    "9a3e4c49557d0061d62477c7845db4f9.jpg": ("line_girl_skull_cap", (0, 0, 0.84, 1), []),
+    "ceacb306532b4b3e4aab47ef2c00cd1c.jpg": ("line_oni_girl_hearts", None, []),
+    "dae11aaa70299d2149940b2777d6f8b3.jpg": ("line_third_eye_girl", (0.03, 0, 1, 1), []),
+    "e323214cbef569548a3ae2ab1b2cb11e.jpg": ("line_three_girls", (0.01, 0.02, 1, 1), [
+        [(0.585, 0), (1, 0), (1, 0.29), (0.9, 0.285), (0.72, 0.27), (0.66, 0.2), (0.6, 0.1)],
+    ]),
+    "e3e01d9669462f2b5a4794c27ccfd893.jpg": ("line_girl_face_stickers", None, []),
+    "f6cb2c988ca18ce8c182463f5516d257.jpg": ("line_girl_hands_face", (0.27, 0, 1, 1), []),
+    "scale_1200.jpeg": ("line_fox_boy_glasses", (0, 0, 0.985, 0.875), []),
+}
+
+# Dropped from Портреты с цветным лайном:
+#   abe72477c82e6d67426bb1e867d0ec68.jpg - 287x527, half the frame is labelled swatches and a big signature
+
+MAX_SIDE = 2048  # large scans are downscaled; training runs at 512-1024 anyway
+
+GROUPS = [("Животные", ANIMALS), ("Фурри", FURRY), ("Портреты с цветным лайном", LINE)]
+
+
 def px(box, w, h):
     l, t, r, b = box
     return round(l * w), round(t * h), round(r * w), round(b * h)
 
 
 def process(src, crop, inpaint):
-    img = cv2.cvtColor(np.array(Image.open(src).convert("RGB")), cv2.COLOR_RGB2BGR)
+    im = Image.open(src)
+    if im.mode == "RGBA":  # flatten semi-transparent scans onto white paper
+        im = Image.alpha_composite(Image.new("RGBA", im.size, "white"), im)
+    img = cv2.cvtColor(np.array(im.convert("RGB")), cv2.COLOR_RGB2BGR)
     h, w = img.shape[:2]
     if inpaint:
         mask = np.zeros((h, w), np.uint8)
-        for rect in inpaint:
-            l, t, r, b = px(rect, w, h)
-            mask[t:b, l:r] = 255
+        for shape in inpaint:
+            if isinstance(shape, list):
+                pts = np.array([(round(x * w), round(y * h)) for x, y in shape], np.int32)
+                cv2.fillPoly(mask, [pts], 255)
+            else:
+                l, t, r, b = px(shape, w, h)
+                mask[t:b, l:r] = 255
         img = cv2.inpaint(img, mask, 7, cv2.INPAINT_TELEA)
     if crop:
         l, t, r, b = px(crop, w, h)
@@ -76,13 +138,18 @@ def process(src, crop, inpaint):
     return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
 
-def main(raw_dir, out_dir):
+def main(raw_root, out_dir):
     os.makedirs(out_dir, exist_ok=True)
-    for i, (fname, (name, crop, inpaint)) in enumerate(sorted(PLAN.items(), key=lambda kv: kv[1][0]), 1):
-        im = process(os.path.join(raw_dir, fname), crop, inpaint)
-        dst = os.path.join(out_dir, f"{i:03d}_{name}.png")
-        im.save(dst, optimize=True)
-        print(f"{dst}  {im.size[0]}x{im.size[1]}")
+    i = 0
+    for folder, plan in GROUPS:
+        for fname, (name, crop, inpaint) in sorted(plan.items(), key=lambda kv: kv[1][0]):
+            i += 1
+            im = process(os.path.join(raw_root, folder, fname), crop, inpaint)
+            if max(im.size) > MAX_SIDE:
+                im.thumbnail((MAX_SIDE, MAX_SIDE), Image.LANCZOS)
+            dst = os.path.join(out_dir, f"{i:03d}_{name}.png")
+            im.save(dst, optimize=True)
+            print(f"{dst}  {im.size[0]}x{im.size[1]}")
 
 
 if __name__ == "__main__":
